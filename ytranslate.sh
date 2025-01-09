@@ -32,6 +32,9 @@ title=$(yt-dlp --print filename -o "%(title)s" "${URL}" | sed 's/[^a-zA-Z0-9._-]
 if [[ -z "${title}" ]]; then
 	echo "[ERROR] file not found"
 	exit 1
+elif [[ -f "${title}.mp4" ]]; then
+	echo "File '${title}.mp4' already exists. Exiting."
+	exit 0
 fi
 
 yt-dlp -f "bestvideo[ext=mp4]" -o "${title}.part.mp4" "${URL}"
