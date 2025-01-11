@@ -1,34 +1,107 @@
 #!/usr/bin/env bash
+set -euo pipefail;
+trap handle_exit EXIT;
+__file="$(basename $0)";
 
 VERSION='1.0.0'
-[[ -n "${1:-}" ]] && URL="$1"
+HELP="
+Usage: ${__file} [OPTION...] <URL>
 
-if [[ -z "${URL}" ]]; then
-	echo "Current version: $VERSION";
-	echo " $(basename $0) <url>"
-	exit 0
+Options:
+	-h, --help                  Show help options
+	-v, --version               Show version information
+	-r, --height=<int>          Set height
+	-f, --from_lang=<str>       Set from language (en, ru, zh, ko, ar, fr, it, es, de, ja)
+	-t, --to_lang=<str>         Set to language (ru, en, kk)
+
+Set INSTALL_DEPENDENCIES=1 for automatic install dependencies.
+"
+
+handle_exit() {
+	rm -rf ".ytranslate"
+}
+
+install_dependency() {
+	local pkg="${2:-apt}"
+	local dependency="${1}"
+	local dependencies="${dependency}"
+	local arg=''
+	[[ -n "${3:-}" ]] && dependencies="${dependencies} ${3}"
+	if ! command -v "${dependency}" &>/dev/null; then
+		if [[ "${INSTALL_DEPENDENCIES:-0}" == "1" ]] || [[ -n "${COLAB_RELEASE_TAG:-}" ]]; then
+			if [ $(id -u) -ne 0 ]; then
+				echo "[ERROR] access denied"
+				exit 1
+			fi
+			if [[ "${pkg}" == "apt" ]]; then
+				arg='-y'
+			elif [[ "${pkg}" == "pip" ]]; then
+				if ! command -v "${pkg}" &>/dev/null; then
+					install_dependency "pip"
+				fi
+			elif [[ "${pkg}" == "npm" ]]; then
+				if ! command -v "${pkg}" &>/dev/null; then
+					curl -fsSL https://raw.githubusercontent.com/tj/n/master/bin/n | bash -s install lts
+				fi
+				arg='-g'
+			fi
+			if ! "${pkg}" install ${arg} ${dependencies}; then
+				echo "[ERROR] ${dependency}: install failed"
+				exit 1
+			fi
+		else
+			echo "[ERROR] ${dependency} not found"
+			exit 1
+		fi
+	fi
+}
+
+if (( $# > 0 )); then
+	while getopts hvr:-:f:-:t:-: OPT; do
+		if [ "${OPT}" = "-" ]; then
+			OPT="${OPTARG%%=*}"
+			OPTARG="${OPTARG#"$OPT"}"
+			OPTARG="${OPTARG#=}"
+		fi
+		case "$OPT" in
+			h | help )
+				echo "${HELP:1}"
+				exit
+			;;
+			v | version )
+				echo "${VERSION}"
+				exit
+			;;
+			r | height )
+				HEIGHT="${OPTARG}"
+			;;
+			f | from_lang )
+				FROMLANG="${OPTARG}"
+			;;
+			t | to_lang )
+				TOLANG="${OPTARG}"
+			;;
+		esac
+	done
+	shift $((OPTIND - 1))
+	if (( $# > 0 )); then
+		URL="$1"
+	fi
 fi
-
-if ! command -v ffmpeg &>/dev/null; then
-	echo "[ERROR] install ffmpeg"
+if [[ -z "${URL:-}" ]]; then
+	echo "${HELP:1}" | head -n 1
 	exit 1
 fi
 
-if ! command -v yt-dlp &>/dev/null; then
-	if ! pip install yt-dlp &> /dev/null; then
-		echo "[ERROR] install yt-dlp"
-		exit 1
-	fi
-fi
+install_dependency "ffmpeg"
+install_dependency "spleeter" "pip" "numpy==1.26.4" # "numpy==1.23"
+install_dependency "yt-dlp" "pip"
+install_dependency "vot-cli" "npm"
 
-if ! command -v vot-cli &>/dev/null; then
-	if ! npm install -g vot-cli &> /dev/null; then
-		echo "[ERROR] install vot-cli"
-		exit 1
-	fi
-fi
-
-title=$(yt-dlp --print filename -o "%(title)s" "${URL}" | sed 's/[^a-zA-Z0-9._-]/-/g' | sed 's/--*/-/g' | tr ' ' '_')
+title=$(
+	yt-dlp --print filename -o "%(title)s" "${URL}" |
+	sed 's/[^a-zA-Z0-9._-]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//' | tr ' ' '_'
+)
 if [[ -z "${title}" ]]; then
 	echo "[ERROR] file not found"
 	exit 1
@@ -37,17 +110,50 @@ elif [[ -f "${title}.mp4" ]]; then
 	exit 0
 fi
 
-yt-dlp -f "bestvideo[ext=mp4]" -o "${title}.part.mp4" "${URL}"
-if [[ $? -ne 0 ]]; then
-	echo "[ERROR] yt-dlp failed to download video."
+cache=".ytranslate/${title}"
+audio_format="bestaudio[ext=m4a]"
+video_format="bestvideo[ext=mp4]"
+mkdir -p "${cache}"
+
+[[ "${HEIGHT:-0}" != "0" ]] && video_format="${video_format}[height<=${HEIGHT}]"
+if [[ ! -f "${cache}/audio.mp3" ]]; then
+	if ! vot-cli \
+		--lang="${FROMLANG:-en}" --reslang="${TOLANG:-ru}" \
+		--output="${cache}" --output-file="audio.mp3" "${URL}" >/dev/null || [[ ! -f "${cache}/audio.mp3" ]];
+	then
+		echo "[ERROR] vot-cli failed to download audio."
+		exit 1
+	fi
+fi
+if [[ ! -f "${cache}/audio.m4a" ]]; then
+	if ! yt-dlp -f "${audio_format}" -o "${cache}/audio.m4a" "${URL}" || [[ ! -f "${cache}/audio.m4a" ]]; then
+		echo "[ERROR] yt-dlp failed to download audio."
+		exit 1
+	fi
+fi
+if [[ ! -f "${cache}/video.mp4" ]]; then
+	if ! yt-dlp -f "${video_format}" -o "${cache}/video.mp4" "${URL}" || [[ ! -f "${cache}/video.mp4" ]]; then
+		echo "[ERROR] yt-dlp failed to download video."
+		exit 1
+	fi
+fi
+if [[ ! -f "${cache}/audio/vocals.wav" ]] || [[ ! -f "${cache}/audio/accompaniment.wav" ]]; then
+	if ! spleeter separate -o "${cache}" "${cache}/audio.m4a"; then
+		echo "[ERROR] spleeter failed."
+		exit 1
+	fi
+fi
+if ! ffmpeg \
+	-i "${cache}/video.mp4" \
+	-i "${cache}/audio.mp3" \
+	-i "${cache}/audio/accompaniment.wav" \
+	-map 0:v \
+	-filter_complex "[1:a][2:a]amix=inputs=2:duration=longest[a]" \
+	-map "[a]" \
+	-c:v copy \
+	-c:a aac -strict experimental -nostdin \
+	"${title}.mp4" || [[ ! -f "${title}.mp4" ]];
+then
+	echo "[ERROR] ffmpeg failed"
 	exit 1
 fi
-
-vot-cli --output "." --output-file "${title}.part.mp3" "${URL}"
-if [[ $? -ne 0 ]]; then
-	echo "[ERROR] vot-cli failed to download audio."
-	exit 1
-fi
-
-ffmpeg -i "${title}.part.mp4" -i "${title}.part.mp3" -c copy "${title}.mp4" -nostdin
-rm "${title}.part.mp4" "${title}.part.mp3"
