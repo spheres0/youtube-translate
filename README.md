@@ -113,3 +113,14 @@ INSTALL_DEPENDENCIES=1 ./ytranslate.sh [ОПЦИИ] <URL>
 ```
 
 Обратите внимание, что для установки зависимостей, требуются права root.
+
+---
+
+## Youtube
+| [![google][google_img]][google_url] | [![linux][linux_img]][linux_url]
+| --- | ---
+
+[google_img]: https://img.youtube.com/vi/7-rYQ2QHXgo/0.jpg "Google Colab"
+[google_url]: https://youtu.be/7-rYQ2QHXgo
+[linux_img]: https://img.youtube.com/vi/gNvPf7nGXFQ/0.jpg "Linux"
+[linux_url]: https://youtu.be/gNvPf7nGXFQ
