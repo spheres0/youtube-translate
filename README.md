@@ -18,7 +18,7 @@ This script allows you to easily translate videos from YouTube and other online 
 ### Local
 
 1. Install the necessary dependencies (ffmpeg, spleeter, yt-dlp, vot-cli, npm/pip).
-2. Make `ytranslate.sh` executable: `chmod +x ytranslate.sh`.
+2. Make [`ytranslate.sh`](https://raw.githubusercontent.com/alex2844/youtube-translate/main/ytranslate.sh) executable: `chmod +x ytranslate.sh`.
 3. Run the script:
 
     ```bash
