@@ -18,7 +18,7 @@ Set INSTALL_DEPENDENCIES=1 for automatic install dependencies.
 "
 
 handle_exit() {
-	rm -rf ".ytranslate"
+	rm -rf ".ytranslate" "pretrained_models"
 }
 
 install_dependency() {
@@ -94,28 +94,38 @@ if [[ -z "${URL:-}" ]]; then
 fi
 
 install_dependency "ffmpeg"
-install_dependency "spleeter" "pip" "numpy==1.26.4" # "numpy==1.23"
+install_dependency "spleeter" "pip" "numpy==1.26.4"
 install_dependency "yt-dlp" "pip"
 install_dependency "vot-cli" "npm"
 
-title=$(
-	yt-dlp --print filename -o "%(title)s" "${URL}" |
-	sed 's/[^a-zA-Z0-9._-]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//' | tr ' ' '_'
-)
-if [[ -z "${title}" ]]; then
+if [[ "$1" != *"://"* ]] && [[ "$1" == *"/MyDrive/"* ]] && [[ -n "${COLAB_RELEASE_TAG:-}" ]]; then
+	install_dependency "xattr"
+	filepath="${URL}"
+	filename=$(basename "${filepath}")
+	fileid=$(xattr -p 'user.drive.id' "${URL}")
+	URL="https://drive.google.com/file/d/${fileid}/view"
+else
+	if [[ "${URL}" =~ ^(https?://)?((www.|m.)?youtube(-nocookie)?.com)|(youtu.be) ]]; then
+		audio_format="bestaudio[ext=m4a]"
+		video_format="bestvideo[ext=mp4]"
+		[[ "${HEIGHT:-0}" != "0" ]] && video_format="${video_format}[height<=${HEIGHT}]"
+	fi
+	unset filepath
+	filename=$(yt-dlp --print filename -o "%(title)s.%(ext)s" "${URL}" | sed 's/[^a-zA-Z0-9._-]/-/g')
+fi
+if [[ -z "${filename}" ]]; then
 	echo "[ERROR] file not found"
 	exit 1
-elif [[ -f "${title}.mp4" ]]; then
+fi
+title=$(echo "${filename}" | sed -E "s/(\.${filename##*.})+$//" | sed 's/--*/-/g' | sed -E 's/(^-|-$)//g' | tr ' ' '_')
+if [[ -f "${title}.mp4" ]]; then
 	echo "File '${title}.mp4' already exists. Exiting."
 	exit 0
 fi
 
 cache=".ytranslate/${title}"
-audio_format="bestaudio[ext=m4a]"
-video_format="bestvideo[ext=mp4]"
 mkdir -p "${cache}"
 
-[[ "${HEIGHT:-0}" != "0" ]] && video_format="${video_format}[height<=${HEIGHT}]"
 if [[ ! -f "${cache}/audio.mp3" ]]; then
 	if ! vot-cli \
 		--lang="${FROMLANG:-en}" --reslang="${TOLANG:-ru}" \
@@ -125,16 +135,31 @@ if [[ ! -f "${cache}/audio.mp3" ]]; then
 		exit 1
 	fi
 fi
-if [[ ! -f "${cache}/audio.m4a" ]]; then
-	if ! yt-dlp -f "${audio_format}" -o "${cache}/audio.m4a" "${URL}" || [[ ! -f "${cache}/audio.m4a" ]]; then
-		echo "[ERROR] yt-dlp failed to download audio."
-		exit 1
-	fi
-fi
-if [[ ! -f "${cache}/video.mp4" ]]; then
-	if ! yt-dlp -f "${video_format}" -o "${cache}/video.mp4" "${URL}" || [[ ! -f "${cache}/video.mp4" ]]; then
-		echo "[ERROR] yt-dlp failed to download video."
-		exit 1
+if [[ ! -f "${cache}/audio.m4a" ]] || [[ ! -f "${cache}/video.mp4" ]]; then
+	if [[ -n "${audio_format:-}" ]] && [[ -n "${video_format:-}" ]]; then
+		if [[ ! -f "${cache}/audio.m4a" ]]; then
+			if ! yt-dlp -f "${audio_format}" -o "${cache}/audio.m4a" "${URL}" || [[ ! -f "${cache}/audio.m4a" ]]; then
+				echo "[ERROR] yt-dlp failed to download audio."
+				exit 1
+			fi
+		fi
+		if [[ ! -f "${cache}/video.mp4" ]]; then
+			if ! yt-dlp -f "${video_format}" -o "${cache}/video.mp4" "${URL}" || [[ ! -f "${cache}/video.mp4" ]]; then
+				echo "[ERROR] yt-dlp failed to download video."
+				exit 1
+			fi
+		fi
+	else
+		if [[ -z "${filepath:-}" ]]; then
+			if [[ ! -f "${cache}/${filename}" ]]; then
+				if ! yt-dlp -o "${cache}/${filename}" "${URL}" || [[ ! -f "${cache}/${filename}" ]]; then
+					echo "[ERROR] yt-dlp failed to download audio+video."
+					exit 1
+				fi
+			fi
+			filepath="${cache}/${filename}"
+		fi
+		ffmpeg -i "${filepath}" -vn -acodec copy "${cache}/audio.m4a" -an -vcodec copy "${cache}/video.mp4" -nostdin
 	fi
 fi
 if [[ ! -f "${cache}/audio/vocals.wav" ]] || [[ ! -f "${cache}/audio/accompaniment.wav" ]]; then
