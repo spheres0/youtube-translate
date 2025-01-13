@@ -98,7 +98,7 @@ install_dependency "spleeter" "pip" "numpy==1.26.4"
 install_dependency "yt-dlp" "pip"
 install_dependency "vot-cli" "npm"
 
-if [[ "$1" != *"://"* ]] && [[ "$1" == *"/MyDrive/"* ]] && [[ -n "${COLAB_RELEASE_TAG:-}" ]]; then
+if [[ "${URL}" != *"://"* ]] && [[ "${URL}" == *"/MyDrive/"* ]] && [[ -n "${COLAB_RELEASE_TAG:-}" ]]; then
 	install_dependency "xattr"
 	filepath="${URL}"
 	filename=$(basename "${filepath}")
