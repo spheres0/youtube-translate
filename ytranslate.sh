@@ -23,7 +23,7 @@ handle_exit() {
 
 install_dependency() {
 	local pkg="${2:-apt}"
-	local dependency="${1}"
+	local dependency="${1%%=*}"
 	local dependencies="${dependency}"
 	local arg=''
 	[[ -n "${3:-}" ]] && dependencies="${dependencies} ${3}"
@@ -52,6 +52,12 @@ install_dependency() {
 		else
 			echo "[ERROR] ${dependency} not found"
 			exit 1
+		fi
+	fi
+	if [[ "${dependency}" =~ ^python ]] && [[ "${INSTALL_DEPENDENCIES:-0}" == "1" ]] || [[ -n "${COLAB_RELEASE_TAG:-}" ]]; then
+		if [[ ! $(python3 -V 2>&1 | awk '{print $2}') =~ ^"${dependency:6}" ]]; then
+			update-alternatives --set python3 "$(which ${dependency})"
+			apt install -y python3-pip
 		fi
 	fi
 }
@@ -94,6 +100,7 @@ if [[ -z "${URL:-}" ]]; then
 fi
 
 install_dependency "ffmpeg"
+install_dependency "python3.10"
 install_dependency "spleeter" "pip" "numpy==1.26.4"
 install_dependency "yt-dlp" "pip"
 install_dependency "vot-cli" "npm"
